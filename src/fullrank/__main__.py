@@ -18,29 +18,32 @@ def compare(
     items_file: Path = typer.Argument(
         ..., help="File containing the items to rank, seperated by newlines"
     ),
+    output_file: Path = typer.Argument(
+        ..., help="Output JSON file"
+    ),
     prior_var: float = typer.Option(1.0, help="The variance of the prior"),
 ):
     """
     Compare items and write the comparisons to stdout in JSON format for inference.
     """
 
-    items = [line.rstrip("\n") for line in items_file.read_text().splitlines()]
+    items = [line.rstrip("\n") for line in items_file.read_text(encoding="utf-8").splitlines()]
 
     comparisons = ComparisonApp(items, prior_var=prior_var).run()
     if comparisons is None:
         print("[bold red]No comparisons were made.[/bold red]", file=sys.stderr)
         return
-    
+
     print(
         f"[bold green]Finished {len(comparisons)} comparisons of {len(items)} items.[/bold green]",
         file=sys.stderr,
     )
 
-    print(
+    output_file.write_text(
         json.dumps(
             {"items": items, "prior_var": prior_var, "comparisons": comparisons},
-            indent="\t",
-        )
+            indent="\t", ensure_ascii=False
+        ), encoding="utf-8"
     )
 
 
@@ -91,8 +94,12 @@ def infer_sun():
     print("[bold]tau:[/bold]", posterior.tau, sep="\n")
     print("[bold]Gamma:[/bold]", posterior.Gamma, sep="\n")
 
+
 @app.command()
 def stats(
+    comp_file: Path = typer.Argument(
+        ..., help="Comparison JSON file"
+    ),
     n: int = typer.Argument(100_000, help="The number of samples to draw"),
     entropy: bool = typer.Option(False, flag_value=True, help="Compute entropy"),
 ):
@@ -100,7 +107,7 @@ def stats(
     Compute statistics from a posterior distribution.
     """
 
-    compare_result = json.loads(sys.stdin.read())
+    compare_result = json.loads(comp_file.read_text(encoding="utf-8"))
     items = compare_result["items"]
 
     posterior = fullrank.infer(
@@ -138,6 +145,14 @@ def stats(
             "[bold]Entropy:[/bold] ",
             posterior_stats.lddp(posterior, samples=samples),
         )
+
+    # Print human-readable ranking
+    mean_scores = samples.mean(axis=1)
+    ranking = np.argsort(-mean_scores)  # descending order
+    print("\n[bold]Approximated ranking:[/bold]")
+    for i, idx in enumerate(ranking, 1):
+        print(f"{i}. {items[idx]}")
+
 
 if __name__ == "__main__":
     app()
