@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+import time
 import numpy as np
 from textual.app import App, ComposeResult
 from textual.containers import HorizontalGroup, Center
@@ -19,6 +19,10 @@ class ComparisonApp(App[list[Comparison]]):
     CSS = """
         #entropy-stats {
             layout: horizontal;
+        }
+        
+        #calc-time {
+            dock: right;
         }
 
         ProgressBar {
@@ -43,23 +47,29 @@ class ComparisonApp(App[list[Comparison]]):
     def __init__(
         self,
         items: list[str],
+        comparisons: list[Comparison] = None,
         prior_var: float = 1.0,
     ):
         super().__init__()
         self.items = items
-        self.comparisons: list[Comparison] = []
+        self.comparisons = [] if comparisons is None else comparisons
         self.left_index = 0
         self.right_index = 1
         self.prior_var = prior_var
 
+    def on_mount(self) -> None:
+        if self.comparisons:
+            self.next_comparison()
+
     def compose(self) -> ComposeResult:
         yield Header(name="Fullrank", show_clock=True)
         with Center(id="entropy-stats"):
-            yield Static("KL(Posterior || Prior)")
+            yield Static("Ent")
             yield ProgressBar(
                 total=1.0, show_eta=False, show_percentage=False, id="entropy-bar"
             )
             yield Static("0.00 bits", id="entropy-value")
+            yield Static("", id="calc-time")
         with HorizontalGroup(id="comparison-buttons"):
             yield Button(self.items[self.left_index], action="left", id="left-button")
             yield Button(
@@ -84,6 +94,7 @@ class ComparisonApp(App[list[Comparison]]):
         self.next_comparison()
 
     def next_comparison(self) -> None:
+        t = time.perf_counter()
         posterior = infer(
             np.zeros(len(self.items)),
             self.prior_var * np.eye(len(self.items)),
@@ -96,26 +107,27 @@ class ComparisonApp(App[list[Comparison]]):
             int,
             np.unravel_index(np.argmin(comp_skewness_norms), comp_skewness_norms.shape),
         )
+        #self.query_one("#entropy-value").update("..... bits")
         self.query_one("#left-button").label = self.items[self.left_index]
         self.query_one("#right-button").label = self.items[self.right_index]
 
-        self.query_one("#entropy-value").update("Calculating...")
+        self.query_one("#calc-time").update(f"| {time.perf_counter() - t:.2f} |")
 
         # Offload entropy calculation to thread worker
-        self.calculate_entropy(posterior)
+        #self.calculate_entropy(posterior) # too slow
 
     @work(thread=True)
     def calculate_entropy(self, posterior) -> None:
         """Calculate KL divergence in a background thread to avoid blocking UI."""
         worker = get_current_worker()
-        
+
         if not worker.is_cancelled:
             kl_div = -posterior_stats.lddp(posterior, samples=100)
-            
+
             if not worker.is_cancelled:
                 # Update UI from thread using call_from_thread
                 self.call_from_thread(self.update_entropy_display, kl_div)
-    
+
     def update_entropy_display(self, kl_div: float) -> None:
         """Update the entropy display widgets with calculated value."""
         self.query_one("#entropy-value").update(f"{kl_div:.2f} bits")

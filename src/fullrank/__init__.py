@@ -60,9 +60,12 @@ class Posterior:
         Samples columns from the posterior distribution.
         Returns a matrix of shape (n, num_samples).
         """
-        xi = np.tile(self.xi, (num_samples, 1)).transpose()
-        U0 = np.random.multivariate_normal(
-            np.zeros(self.xi.shape[0]), self.Psi_bar, num_samples
-        ).T
-        U1 = self.U1_dist.sample(num_samples)
+        rng = np.random.default_rng()
+        xi = np.tile(self.xi[:, None], (1, num_samples))
+        # U0 via Cholesky
+        L = np.linalg.cholesky(self.Psi_bar)
+        Z = rng.standard_normal((self.n, num_samples))
+        U0 = L @ Z
+        # U1 from existing sampler
+        U1 = self.U1_dist.sample(num_samples)  # (m, num_samples)
         return xi + U0 + self.Delta_times_Gamma_inv @ U1

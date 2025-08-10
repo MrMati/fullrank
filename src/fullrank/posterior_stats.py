@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.stats import multivariate_normal, norm
+from opt_einsum import contract
 import approxcdf
 
 from fullrank import Posterior
@@ -75,18 +76,9 @@ def comparison_skewness_norms(posterior: Posterior) -> np.ndarray:
     Returns a 2D array of shape (n, n) where the (i, j) entry is the L2 norm of the skewness vector of the comparison between items i and j.
     """
     n = posterior.prior_mean.shape[0]
-
-    all_comparisons = np.zeros((n, n, n))
-    for i in range(n):
-        for j in range(n):
-            all_comparisons[i, j, i] += 1.0
-            all_comparisons[i, j, j] -= 1.0
-
+    # Vectorized construction of all_comparisons
+    all_comparisons = np.eye(n)[None, :, :] - np.eye(n)[:, None, :]
+    # all_comparisons shape: (n, n, n)
     Delta_squared = posterior.Delta @ posterior.Delta.T
 
-    return np.einsum(
-        "ijk,kl,ijl->ij",
-        all_comparisons,
-        Delta_squared,
-        all_comparisons,
-    )
+    return contract("ijk,kl,ijl->ij", all_comparisons, Delta_squared, all_comparisons)

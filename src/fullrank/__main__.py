@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import sys
+import concurrent.futures
 import numpy as np
 import typer
 from rich import print
@@ -21,13 +22,17 @@ def compare(
     output_file: Path = typer.Argument(
         ..., help="Output JSON file"
     ),
+    shuffle_items: bool = False,
     prior_var: float = typer.Option(1.0, help="The variance of the prior"),
 ):
     """
-    Compare items and write the comparisons to stdout in JSON format for inference.
+    Compare items and write the comparisons to file in JSON format for inference.
     """
 
     items = [line.rstrip("\n") for line in items_file.read_text(encoding="utf-8").splitlines()]
+
+    if shuffle_items:
+        np.random.shuffle(items)
 
     comparisons = ComparisonApp(items, prior_var=prior_var).run()
     if comparisons is None:
@@ -38,6 +43,46 @@ def compare(
         f"[bold green]Finished {len(comparisons)} comparisons of {len(items)} items.[/bold green]",
         file=sys.stderr,
     )
+
+    output_file.write_text(
+        json.dumps(
+            {"items": items, "prior_var": prior_var, "comparisons": comparisons},
+            indent="\t", ensure_ascii=False
+        ), encoding="utf-8"
+    )
+
+
+@app.command()
+def compare_cont(
+    comp_file: Path = typer.Argument(
+        ..., help="Existing comparison JSON file"
+    ),
+    output_file: Path = typer.Argument(
+        None, help="Optional comparison output JSON file"
+    )
+):
+    """
+    Load a comparison session and continue it. Results can be saved to input file or a new one.
+    """
+
+    compare_result = json.loads(comp_file.read_text(encoding="utf-8"))
+    items = compare_result["items"]
+    curr_comparisons = compare_result["comparisons"]
+    len_curr_comparisons = len(curr_comparisons)
+    prior_var = compare_result["prior_var"]
+
+    comparisons = ComparisonApp(items, comparisons=curr_comparisons, prior_var=prior_var).run()
+    if len(comparisons) - len_curr_comparisons == 0:
+        print("[bold red]No changes to comparisons were made.[/bold red]", file=sys.stderr)
+        return
+
+    print(
+        f"[bold green]Finished {len(comparisons)} comparisons of {len(items)} items.[/bold green]",
+        file=sys.stderr,
+    )
+
+    if output_file is None:
+        output_file = comp_file
 
     output_file.write_text(
         json.dumps(
@@ -100,7 +145,7 @@ def stats(
     comp_file: Path = typer.Argument(
         ..., help="Comparison JSON file"
     ),
-    n: int = typer.Argument(100_000, help="The number of samples to draw"),
+    n: int = typer.Argument(25_000, help="The number of samples to draw"),
     entropy: bool = typer.Option(False, flag_value=True, help="Compute entropy"),
 ):
     """
@@ -109,6 +154,8 @@ def stats(
 
     compare_result = json.loads(comp_file.read_text(encoding="utf-8"))
     items = compare_result["items"]
+    comparisons = compare_result["comparisons"]
+    prior_var = compare_result["prior_var"]
 
     posterior = fullrank.infer(
         np.zeros(len(items)),
@@ -118,9 +165,23 @@ def stats(
     print("[bold green]Finished inferring posterior.[/bold green]", file=sys.stderr)
 
     batch_size = 1000
+
+    num_batches = (n + batch_size - 1) // batch_size
+
+    def sample_batch():
+        _posterior = fullrank.infer(
+            np.zeros(len(items)),
+            prior_var * np.eye(len(items)),
+            comparisons,
+        )
+        return _posterior.sample(batch_size)
+
     batches = []
-    for _ in track(range(0, n, batch_size), description="[blue]Sampling...[/blue]"):
-        batches.append(posterior.sample(batch_size))
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = [executor.submit(sample_batch) for _ in range(num_batches)]
+        batches = []
+        for future in track(futures, total=num_batches, description="[blue]Sampling...[/blue]"):
+            batches.append(future.result())
     samples = np.concatenate(batches, axis=1)
     del batches
 

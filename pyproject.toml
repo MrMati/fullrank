@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "approxcdf",
     "numpy>=2.3.1",
+    "opt-einsum>=3.4.0",
     "scipy>=1.16.0",
     "textual>=4.0.0",
     "typer>=0.16.0",

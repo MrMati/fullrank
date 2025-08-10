@@ -7,14 +7,18 @@ It can then sample from the resulting posterior distribution and compute various
 
 ## Installation and Usage
 
+This project relies on free-threading build of Python (3.13t).
+
 ```bash
 # install via pip
 pip install git+https://github.com/max-niederman/fullrank.git
 
 # interactively compare items
-fullrank compare items.txt > comparisons.json
+fullrank compare items.txt comparisons.json
+# continue comparing items (output defaults to input file)
+fullrank compare comparisons.json [comparisons2.json]
 # infer a ranking distribution and compute statistics
-fullrank stats < comparisons.json
+fullrank stats comparisons.json
 # compute raw samples in JSONL format for your own processing
 fullrank raw-sample 10000 samples.jsonl < comparisons.json
 # get the unified skew-normal distribution parameters of the posterior
